@@ -1,0 +1,186 @@
+{
+  "tasks": [
+    {
+      "id": 1,
+      "title": "完成项目报告",
+      "description": "整理Q4项目总结报告",
+      "category": "work",
+      "projectId": 1,
+      "assignedTo": [
+        1,
+        2
+      ],
+      "completedBy": [],
+      "priority": "high",
+      "status": "pending",
+      "dueDate": "2024-01-15",
+      "tags": [
+        "报告",
+        "项目"
+      ],
+      "createdAt": "2025-10-01T16:22:10.884Z",
+      "completedAt": null
+    },
+    {
+      "id": 2,
+      "title": "买菜做饭",
+      "description": "去超市购买食材，准备晚餐",
+      "category": "life",
+      "priority": "medium",
+      "status": "pending",
+      "dueDate": "2024-01-12",
+      "tags": [
+        "购物",
+        "做饭"
+      ],
+      "createdAt": "2025-10-01T16:22:10.884Z",
+      "completedAt": null
+    },
+    {
+      "id": 3,
+      "title": "团队会议",
+      "description": "参加周例会，讨论项目进度",
+      "category": "work",
+      "projectId": 1,
+      "assignedTo": [
+        1,
+        2,
+        3
+      ],
+      "completedBy": [
+        1,
+        2,
+        3
+      ],
+      "priority": "high",
+      "status": "completed",
+      "dueDate": "2024-01-10",
+      "tags": [
+        "会议",
+        "团队"
+      ],
+      "createdAt": "2025-10-01T16:22:10.884Z",
+      "completedAt": "2025-10-01T16:22:10.884Z"
+    }
+  ],
+  "projects": [
+    {
+      "id": 1,
+      "name": "网站重构项目",
+      "description": "公司官网重构升级",
+      "color": "#3b82f6",
+      "createdAt": "2025-10-01T16:22:10.884Z"
+    },
+    {
+      "id": 2,
+      "name": "移动应用开发",
+      "description": "iOS和Android应用开发",
+      "color": "#10b981",
+      "createdAt": "2025-10-01T16:22:10.884Z"
+    },
+    {
+      "id": 3,
+      "name": "数据分析系统",
+      "description": "用户行为数据分析系统",
+      "color": "#f59e0b",
+      "createdAt": "2025-10-01T16:22:10.884Z"
+    }
+  ],
+  "people": [
+    {
+      "id": 1,
+      "name": "张三",
+      "role": "前端开发",
+      "email": "<email@example.com>",
+      "avatar": null
+    },
+    {
+      "id": 2,
+      "name": "李四",
+      "role": "项目经理",
+      "email": "<email@example.com>",
+      "avatar": null
+    },
+    {
+      "id": 3,
+      "name": "王五",
+      "role": "后端开发",
+      "email": "<email@example.com>",
+      "avatar": null
+    }
+  ],
+  "presetTags": [
+    {
+      "name": "会议",
+      "category": "work",
+      "color": "#3b82f6"
+    },
+    {
+      "name": "开发",
+      "category": "work",
+      "color": "#10b981"
+    },
+    {
+      "name": "测试",
+      "category": "work",
+      "color": "#f59e0b"
+    },
+    {
+      "name": "文档",
+      "category": "work",
+      "color": "#8b5cf6"
+    },
+    {
+      "name": "设计",
+      "category": "work",
+      "color": "#ec4899"
+    },
+    {
+      "name": "购物",
+      "category": "life",
+      "color": "#06b6d4"
+    },
+    {
+      "name": "运动",
+      "category": "life",
+      "color": "#84cc16"
+    },
+    {
+      "name": "学习",
+      "category": "life",
+      "color": "#f97316"
+    },
+    {
+      "name": "健康",
+      "category": "life",
+      "color": "#ef4444"
+    },
+    {
+      "name": "娱乐",
+      "category": "life",
+      "color": "#8b5cf6"
+    }
+  ],
+  "longTermGoals": [
+    {
+      "id": 1,
+      "title": "提升技术能力",
+      "description": "学习新技术，提升编程技能",
+      "category": "work",
+      "targetDate": "2024-12-31",
+      "progress": 30,
+      "status": "active",
+      "createdAt": "2025-10-01T16:22:10.884Z"
+    },
+    {
+      "id": 2,
+      "title": "健康生活",
+      "description": "保持规律作息，坚持运动",
+      "category": "life",
+      "targetDate": "2024-12-31",
+      "progress": 60,
+      "status": "active",
+      "createdAt": "2025-10-01T16:22:10.884Z"
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+[package]
+name = "todolist"
+version = "0.2.0"
+description = "A Tauri App"
+authors = ["风云变色z"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "todolist_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[features]
+# ⚠️ 生产构建必需，DO NOT REMOVE。
+# 启用后：① tauri-build 把 frontendDist(../build) 的前端资源嵌入 exe；
+#        ② 注册 tauri:// 自定义协议处理器，页面从 exe 内部加载。
+# 缺失时 release 版会回退到 devUrl(http://localhost:1420) → 打开即
+# "嗯… 无法访问此页面 / localhost 拒绝连接"（2026-09-20 实测踩过）。
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 数据层（SPEC §6.1）：rusqlite bundled 自带 SQLite，同步 Mutex 模型；chrono 处理时间戳
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["clock"] }
+# F26 AI 周报 + F27 更新检查：用 **blocking** + rustls。
+# 不用 async：项目是同步 Mutex 架构，async 会让 MutexGuard 跨越 await 点；
+# SSE 流式用 blocking Response 的 Read 逐块读即可，同样能逐字推送前端。
+# rustls 而非 native-tls：避免 Windows 上编译 OpenSSL。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
