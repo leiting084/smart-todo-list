@@ -4,6 +4,7 @@
 pub mod ai;
 pub mod exporter;
 pub mod importer;
+pub mod oplog;
 pub mod pomodoro;
 pub mod reminder;
 pub mod repeat;

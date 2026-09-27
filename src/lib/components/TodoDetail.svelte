@@ -86,7 +86,8 @@
     if (!todo) return;
     const content = descDraft;
     if (content === (todo.content ?? "")) return;
-    await patch({ content: content || null });
+    // 清空发 ""（后端映射为 NULL）；发 null 会被 serde 折叠成"不改"
+    await patch({ content });
   }
   async function saveTags() {
     if (!todo) return;
@@ -265,11 +266,11 @@
       </label>
       <label>日期
         <input type="date" value={ymdToInput(todo.date)}
-          onchange={(e) => patch({ date: inputToYmd((e.target as HTMLInputElement).value) })} />
+          onchange={(e) => patch({ date: inputToYmd((e.target as HTMLInputElement).value) ?? 0 })} />
       </label>
       <label>时间
         <input type="time" value={todo.time ?? ""}
-          onchange={(e) => patch({ time: (e.target as HTMLInputElement).value || null })} />
+          onchange={(e) => patch({ time: (e.target as HTMLInputElement).value })} />
       </label>
       <label class="wide">重复（F15：每日/每周/每月，生成实例）
         <select value={repeatFreq} onchange={(e) => void onRepeatFreq((e.target as HTMLSelectElement).value as RepeatFreq)}>
@@ -288,7 +289,7 @@
       </label>
       <label class="wide">项目
         <select value={todo.projectId ?? ""}
-          onchange={(e) => patch({ projectId: (e.target as HTMLSelectElement).value || null })}>
+          onchange={(e) => patch({ projectId: (e.target as HTMLSelectElement).value })}>
           <option value="">（无）</option>
           {#each projectsState.list as p (p.id)}
             <option value={p.id}>{p.name}</option>
@@ -304,7 +305,7 @@
           class="dot"
           class:on={todo.color === c}
           style={`background:${COLOR_HEX[c]}`}
-          onclick={() => patch({ color: todo!.color === c ? null : c })}
+          onclick={() => patch({ color: todo!.color === c ? "" : c })}
           title={c}
         ></button>
       {/each}

@@ -342,7 +342,10 @@ pub struct CreateTodo {
 
 /// todo_update 入参（部分更新）。
 /// - title/category/priority：普通 Option，给值即更新（不允许清空成空串）；
-/// - 可空字段用 `Option<Option<T>>`：缺失=不改，显式 null=清空。
+/// - 可空字段用 `Option<Option<T>>`。注意：JSON IPC 下 null 会被 serde 折叠成外层 None
+///   （=「不改」），Some(None) 从前端不可达，因此**不能靠 null 表达清空**。清空契约：
+///   文本字段（content/color/project_id/time/parent_id）发空串 ""，date 发 0，
+///   后端 update_todo 把这些哨兵映射成 SQL NULL。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UpdateTodo {

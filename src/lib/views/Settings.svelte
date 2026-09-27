@@ -633,7 +633,7 @@
 
   <section class="block">
     <h3>关于</h3>
-    <p class="hint">智能待办清单 v0.2.0 · Rust + Tauri 2 · 数据本地存储，默认完全离线。关闭主窗=驻留托盘，Esc 同效。</p>
+    <p class="hint">智能待办清单 v0.3.0 · Rust + Tauri 2 · 数据本地存储，默认完全离线。关闭主窗=驻留托盘，Esc 同效。</p>
   </section>
 </div>
 

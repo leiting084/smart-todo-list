@@ -353,19 +353,26 @@ pub fn cleanup_entity_refs(conn: &Connection, item_type: ItemType, item_id: &str
 #[tauri::command]
 pub fn goal_create(db: State<'_, Db>, input: CreateGoal) -> Result<Goal, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    create_goal(&conn, input)
+    let goal = create_goal(&conn, input)?;
+    let _ = crate::services::oplog::record(&conn, "create", "goal", Some(&goal.id), &goal.title);
+    Ok(goal)
 }
 
 #[tauri::command]
 pub fn goal_update(db: State<'_, Db>, id: String, input: UpdateGoal) -> Result<Goal, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    update_goal(&conn, &id, input)
+    let goal = update_goal(&conn, &id, input)?;
+    let _ = crate::services::oplog::record(&conn, "update", "goal", Some(&goal.id), &goal.title);
+    Ok(goal)
 }
 
 #[tauri::command]
 pub fn goal_delete(db: State<'_, Db>, id: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    archive_goal(&conn, &id)
+    let title = get_goal(&conn, &id).map(|g| g.title).unwrap_or_else(|_| id.clone());
+    archive_goal(&conn, &id)?;
+    let _ = crate::services::oplog::record(&conn, "delete", "goal", Some(&id), &title);
+    Ok(())
 }
 
 #[tauri::command]
@@ -381,7 +388,16 @@ pub fn goal_set_links(
     items: Vec<GoalLinkInput>,
 ) -> Result<Vec<GoalLink>, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    set_goal_links(&conn, &goal_id, &items)
+    let title = get_goal(&conn, &goal_id).map(|g| g.title).unwrap_or_else(|_| goal_id.clone());
+    let links = set_goal_links(&conn, &goal_id, &items)?;
+    let _ = crate::services::oplog::record(
+        &conn,
+        "update",
+        "goal",
+        Some(&goal_id),
+        &format!("{title}：设置关联 {} 项", links.len()),
+    );
+    Ok(links)
 }
 
 #[tauri::command]

@@ -236,6 +236,8 @@ pub fn run() {
             services::exporter::export_todos_html,
             // 全文搜索（T4.5）
             services::search::search_all,
+            // 最近操作只读日志（#32）
+            services::oplog::oplog_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

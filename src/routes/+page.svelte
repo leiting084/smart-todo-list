@@ -13,6 +13,7 @@
   import Overview from "$lib/views/Overview.svelte";
   import Memos from "$lib/views/Memos.svelte";
   import Notes from "$lib/views/Notes.svelte";
+  import OpLog from "$lib/views/OpLog.svelte";
   import { NAV_ITEMS, ui } from "$lib/stores.svelte";
 
   const current = $derived(NAV_ITEMS.find((i) => i.id === ui.view));
@@ -72,6 +73,8 @@
           <Notes />
         {:else if ui.view === "overview"}
           <Overview />
+        {:else if ui.view === "oplog"}
+          <OpLog />
         {:else}
           <div class="placeholder">
             <p>「{current?.label}」列表区</p>

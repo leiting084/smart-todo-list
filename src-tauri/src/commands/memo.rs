@@ -370,19 +370,26 @@ pub fn memo_to_note(
 #[tauri::command]
 pub fn memo_create(db: State<'_, Db>, input: CreateMemo) -> Result<Memo, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    create_memo(&conn, input)
+    let memo = create_memo(&conn, input)?;
+    let _ = crate::services::oplog::record(&conn, "create", "memo", Some(&memo.id), &memo.title);
+    Ok(memo)
 }
 
 #[tauri::command]
 pub fn memo_update(db: State<'_, Db>, id: String, input: UpdateMemo) -> Result<Memo, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    update_memo(&conn, &id, input)
+    let memo = update_memo(&conn, &id, input)?;
+    let _ = crate::services::oplog::record(&conn, "update", "memo", Some(&memo.id), &memo.title);
+    Ok(memo)
 }
 
 #[tauri::command]
 pub fn memo_delete(db: State<'_, Db>, id: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    archive_memo(&conn, &id, true)
+    let title = get_memo(&conn, &id).map(|m| m.title).unwrap_or_else(|_| id.clone());
+    archive_memo(&conn, &id, true)?;
+    let _ = crate::services::oplog::record(&conn, "delete", "memo", Some(&id), &title);
+    Ok(())
 }
 
 #[tauri::command]
@@ -395,7 +402,15 @@ pub fn memo_list(db: State<'_, Db>, include_archived: Option<bool>) -> Result<Ve
 #[tauri::command]
 pub fn memo_create_from_todo_cmd(db: State<'_, Db>, todo_id: String) -> Result<Memo, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    memo_create_from_todo(&conn, &todo_id)
+    let memo = memo_create_from_todo(&conn, &todo_id)?;
+    let _ = crate::services::oplog::record(
+        &conn,
+        "create",
+        "memo",
+        Some(&memo.id),
+        &format!("由待办转备忘：{}", memo.title),
+    );
+    Ok(memo)
 }
 
 /// 备忘整理为笔记（T2.3）：note_id 空=新建（title），否则追加。
@@ -407,13 +422,21 @@ pub fn memo_to_note_cmd(
     title: Option<String>,
 ) -> Result<crate::commands::note::Note, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let (note, _) = memo_to_note(
+    let (note, created) = memo_to_note(
         &conn,
         crate::paths::app_paths().notes_dir.as_path(),
         &memo_ids,
         note_id.as_deref(),
         title.as_deref().unwrap_or(""),
     )?;
+    let action = if created { "create" } else { "update" };
+    let _ = crate::services::oplog::record(
+        &conn,
+        action,
+        "note",
+        Some(&note.id),
+        &format!("{}为笔记：{}", if created { "整理" } else { "追加" }, note.title),
+    );
     Ok(note)
 }
 

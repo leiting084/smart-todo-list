@@ -14,6 +14,7 @@ export type ViewId =
   | "goals"
   | "memos"
   | "notes"
+  | "oplog"
   | "overview"
   | "settings";
 
@@ -41,6 +42,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: "goals", label: "目标", icon: "◎", group: "组织" },
   { id: "memos", label: "备忘", icon: "✦", group: "沉淀" },
   { id: "notes", label: "笔记", icon: "▤", group: "沉淀" },
+  { id: "oplog", label: "最近操作", icon: "⧖", group: "系统" },
   { id: "settings", label: "设置", icon: "⚙", group: "系统" },
 ];
 

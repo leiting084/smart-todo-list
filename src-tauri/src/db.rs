@@ -54,6 +54,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         description: "goal_profile",
         sql: include_str!("../migrations/0005_goal_profile.sql"),
     },
+    Migration {
+        version: 6,
+        description: "oplog",
+        sql: include_str!("../migrations/0006_oplog.sql"),
+    },
 ];
 
 /// 生产入口：在全局 paths 指向的位置打开/创建数据库并迁移到最新。
@@ -193,13 +198,13 @@ mod tests {
         let dbp = root.join("data").join("todolist.db");
         let bkp = root.join("backups");
 
-        // 首次：建库 + 全部迁移（当前 5 条：0001-0005）
+        // 首次：建库 + 全部迁移（当前 6 条：0001-0006）
         {
             let conn = open_at(&dbp, &bkp).expect("fresh migrate");
             let n: i64 = conn
                 .query_row("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(n, 5, "首次迁移后 schema_migrations 应有 5 条（0001-0005）");
+            assert_eq!(n, 6, "首次迁移后 schema_migrations 应有 6 条（0001-0006）");
 
             let mode: String = conn
                 .pragma_query_value(None, "journal_mode", |r| r.get(0))
@@ -258,22 +263,31 @@ mod tests {
                     .unwrap();
                 assert_eq!(c, 1, "缺少 0005 goals 列 {col}");
             }
+            // 0006 已建 op_log 表（最近操作只读日志）
+            let c: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='op_log'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(c, 1, "缺少 0006 op_log 表");
         }
 
-        // 二次打开：不重复执行、不报错；仍 5 条迁移记录，且无备份（没有未应用迁移，不触发备份）。
+        // 二次打开：不重复执行、不报错；仍 6 条迁移记录，且无备份（没有未应用迁移，不触发备份）。
         {
             let conn = open_at(&dbp, &bkp).expect("reopen");
             let n: i64 = conn
                 .query_row("SELECT count(*) FROM schema_migrations", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(n, 5);
+            assert_eq!(n, 6);
         }
         let backups = fs::read_dir(&bkp).unwrap().count();
         assert_eq!(backups, 0, "无未应用迁移时不应产生备份");
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// 直接测 runner：构造一个会失败的 v2 迁移，验证事务回滚 + 原库可读 + 生成 pre-v2 备份。
+    /// 直接测 runner：构造一个会失败的假 v7 迁移，验证事务回滚 + 原库可读 + 生成 pre-v7 备份。
     #[test]
     fn failed_migration_keeps_db_readable_and_backs_up() {
         use crate::db::Migration;
@@ -294,9 +308,9 @@ mod tests {
             drop(conn);
         }
 
-        // 构造含坏 SQL 的假迁移 v6（引用不存在的表）；真实 0001-0005 已自动应用。
+        // 构造含坏 SQL 的假迁移 v7（引用不存在的表）；真实 0001-0006 已自动应用。
         let bad = Migration {
-            version: 6,
+            version: 7,
             description: "bad",
             sql: "CREATE TABLE should_rollback(id INTEGER); INSERT INTO nope VALUES (1);",
         };
@@ -307,13 +321,13 @@ mod tests {
             assert!(err.to_string().to_lowercase().contains("no such table"), "错误应为坏 SQL：{err}");
         }
 
-        // pre-v6 备份已生成。
+        // pre-v7 备份已生成。
         let mut backups: Vec<String> = fs::read_dir(&bkp)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
             .collect();
         assert_eq!(backups.len(), 1, "应生成 1 份备份，实际 {backups:?}");
-        assert!(backups[0].contains("-pre-v6.db"), "备份名 {backups:?}");
+        assert!(backups[0].contains("-pre-v7.db"), "备份名 {backups:?}");
 
         // 备份文件可打开且含旧数据。
         let backup_path = bkp.join(backups.remove(0));
@@ -338,13 +352,13 @@ mod tests {
                 .unwrap();
             assert_eq!(name, "旧项目");
             let v: i64 = conn
-                .query_row("SELECT count(*) FROM schema_migrations WHERE version=6", [], |r| r.get(0))
+                .query_row("SELECT count(*) FROM schema_migrations WHERE version=7", [], |r| r.get(0))
                 .unwrap();
             assert_eq!(v, 0, "失败迁移不得登记版本");
             let ok2: i64 = conn
-                .query_row("SELECT count(*) FROM schema_migrations WHERE version=5", [], |r| r.get(0))
+                .query_row("SELECT count(*) FROM schema_migrations WHERE version=6", [], |r| r.get(0))
                 .unwrap();
-            assert_eq!(ok2, 1, "真实 0005 应已正常应用");
+            assert_eq!(ok2, 1, "真实 0006 应已正常应用");
             let c: i64 = conn
                 .query_row("SELECT count(*) FROM sqlite_master WHERE name='should_rollback'", [], |r| r.get(0))
                 .unwrap();

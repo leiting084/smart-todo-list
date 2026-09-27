@@ -186,15 +186,20 @@ pub fn update_todo(conn: &Connection, id: &str, input: UpdateTodo) -> Result<Tod
         }
     }
     if let Some(Some(c)) = &input.color {
-        if !COLORS.contains(&c.as_str()) {
+        // 前端用空串 "" 表示「清除颜色」（JSON null 会被 serde 折叠成"不改"，无法区分）
+        if !c.is_empty() && !COLORS.contains(&c.as_str()) {
             return Err(format!("color 必须是 {COLORS:?}，实际 {c}"));
         }
     }
     if let Some(Some(d)) = input.date {
-        validate_date(Some(d))?;
+        if d != 0 {
+            validate_date(Some(d))?; // 0 = 清除日期哨兵，跳过校验
+        }
     }
     if let Some(Some(t)) = &input.time {
-        validate_time(&Some(t.clone()))?;
+        if !t.is_empty() {
+            validate_time(&Some(t.clone()))?; // "" = 清除时间哨兵
+        }
     }
 
     // 动态拼 SET（completed/completed_at 不在此改）
@@ -208,14 +213,28 @@ pub fn update_todo(conn: &Connection, id: &str, input: UpdateTodo) -> Result<Tod
     if let Some(v) = input.title {
         push("title", Value::Text(v.trim().to_string()));
     }
+    // 清除类字段：JSON null 会被 serde 折叠成「不改」，前端用 "" / 0 作为清除哨兵，
+    // 这里把哨兵（及 Rust 侧真实的 None）映射成 SQL NULL。
     if let Some(v) = input.content {
-        push("content", v.map_or(Value::Null, Value::Text));
+        let val = match v.as_deref() {
+            Some(s) if !s.is_empty() => Value::Text(s.to_string()),
+            _ => Value::Null,
+        };
+        push("content", val);
     }
     if let Some(v) = input.date {
-        push("date", v.map_or(Value::Null, Value::Integer));
+        let val = match v {
+            Some(0) | None => Value::Null,
+            Some(x) => Value::Integer(x),
+        };
+        push("date", val);
     }
     if let Some(v) = input.color {
-        push("color", v.map_or(Value::Null, Value::Text));
+        let val = match v.as_deref() {
+            Some(s) if !s.is_empty() => Value::Text(s.to_string()),
+            _ => Value::Null,
+        };
+        push("color", val);
     }
     if let Some(v) = input.category {
         push("category", Value::Text(v));
@@ -224,13 +243,25 @@ pub fn update_todo(conn: &Connection, id: &str, input: UpdateTodo) -> Result<Tod
         push("priority", Value::Text(v));
     }
     if let Some(v) = input.project_id {
-        push("project_id", v.map_or(Value::Null, Value::Text));
+        let val = match v.as_deref() {
+            Some(s) if !s.is_empty() => Value::Text(s.to_string()),
+            _ => Value::Null,
+        };
+        push("project_id", val);
     }
     if let Some(v) = input.time {
-        push("time", v.map_or(Value::Null, Value::Text));
+        let val = match v.as_deref() {
+            Some(s) if !s.is_empty() => Value::Text(s.to_string()),
+            _ => Value::Null,
+        };
+        push("time", val);
     }
     if let Some(v) = input.parent_id {
-        push("parent_id", v.map_or(Value::Null, Value::Text));
+        let val = match v.as_deref() {
+            Some(s) if !s.is_empty() => Value::Text(s.to_string()),
+            _ => Value::Null,
+        };
+        push("parent_id", val);
     }
     if let Some(v) = input.sort_order {
         push("sort_order", Value::Integer(v));
@@ -649,7 +680,9 @@ pub fn complete_with_children(conn: &Connection, id: &str) -> Result<usize, Stri
 #[tauri::command]
 pub fn todo_create(db: State<'_, Db>, input: CreateTodo) -> Result<Todo, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    create_todo(&conn, input)
+    let todo = create_todo(&conn, input)?;
+    let _ = crate::services::oplog::record(&conn, "create", "todo", Some(&todo.id), &todo.title);
+    Ok(todo)
 }
 
 #[tauri::command]
@@ -665,19 +698,30 @@ pub fn todo_get(db: State<'_, Db>, id: String) -> Result<Option<Todo>, String> {
 #[tauri::command]
 pub fn todo_update(db: State<'_, Db>, id: String, input: UpdateTodo) -> Result<Todo, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    update_todo(&conn, &id, input)
+    let todo = update_todo(&conn, &id, input)?;
+    let _ = crate::services::oplog::record(&conn, "update", "todo", Some(&todo.id), &todo.title);
+    Ok(todo)
 }
 
 #[tauri::command]
 pub fn todo_delete(db: State<'_, Db>, id: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    delete_todo(&conn, &id)
+    // 删除前取标题（重复实例 id 不在 todos，取不到则回退用 id）
+    let title = get_todo(&conn, &id)?
+        .map(|t| t.title)
+        .unwrap_or_else(|| id.clone());
+    delete_todo(&conn, &id)?;
+    let _ = crate::services::oplog::record(&conn, "delete", "todo", Some(&id), &title);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn todo_set_completed(db: State<'_, Db>, id: String, completed: bool) -> Result<Todo, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    set_completed(&conn, &id, completed)
+    let todo = set_completed(&conn, &id, completed)?;
+    let action = if completed { "complete" } else { "uncomplete" };
+    let _ = crate::services::oplog::record(&conn, action, "todo", Some(&todo.id), &todo.title);
+    Ok(todo)
 }
 
 #[tauri::command]
@@ -696,7 +740,18 @@ pub fn todo_reorder(db: State<'_, Db>, ordered_ids: Vec<String>) -> Result<(), S
 #[tauri::command]
 pub fn todo_complete_with_children(db: State<'_, Db>, id: String) -> Result<usize, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    complete_with_children(&conn, &id)
+    let title = get_todo(&conn, &id)?
+        .map(|t| t.title)
+        .unwrap_or_else(|| id.clone());
+    let done = complete_with_children(&conn, &id)?;
+    let _ = crate::services::oplog::record(
+        &conn,
+        "complete",
+        "todo",
+        Some(&id),
+        &format!("{title}（连带 {done} 项）"),
+    );
+    Ok(done)
 }
 
 /// 批量创建（F36/T3.9 剪贴板导入）：分批（每 200 条一个事务）入库。
@@ -727,6 +782,15 @@ pub fn todos_bulk_create(
         tx.commit().map_err(|e| e.to_string())?;
         let _ = batch_failed;
     }
+    if created > 0 {
+        let _ = crate::services::oplog::record(
+            &conn,
+            "import",
+            "todo",
+            None,
+            &format!("批量导入 {created} 条待办"),
+        );
+    }
     Ok((created, failed))
 }
 
@@ -738,14 +802,30 @@ pub fn todo_batch_update(
     patch: BatchTodoPatch,
 ) -> Result<i64, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    batch_update_todos(&conn, &ids, &patch)
+    let n = batch_update_todos(&conn, &ids, &patch)?;
+    let _ = crate::services::oplog::record(
+        &conn,
+        "update",
+        "todo",
+        None,
+        &format!("批量更新 {n} 条待办"),
+    );
+    Ok(n)
 }
 
 /// 批量删除（多选批量操作）：单事务 + FTS 同步，返回删除条数。
 #[tauri::command]
 pub fn todo_batch_delete(db: State<'_, Db>, ids: Vec<String>) -> Result<i64, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    batch_delete_todos(&conn, &ids)
+    let n = batch_delete_todos(&conn, &ids)?;
+    let _ = crate::services::oplog::record(
+        &conn,
+        "delete",
+        "todo",
+        None,
+        &format!("批量删除 {n} 条待办"),
+    );
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -1363,6 +1443,88 @@ mod tests {
         assert!(get_todo(&conn, &keep.id).unwrap().is_some());
         // 空 ids 报错
         assert!(batch_delete_todos(&conn, &[]).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// 回归：待办详情的「清除类」操作。serde_json 会把 JSON null 折叠成外层 None（=不改），
+    /// Some(None) 从前端不可达，故清空只能靠哨兵：文本字段发 ""、date 发 0。
+    /// 这里直接构造前端经 JSON 反序列化后的真实形态 Some(Some(""))/Some(Some(0))，
+    /// 断言 update_todo 把对应列写回 SQL NULL；同时验证「缺失=不改」与非法颜色仍被拒。
+    #[test]
+    fn update_clears_fields_via_sentinels() {
+        let (conn, root) = temp_db("detail-clear");
+        conn.execute(
+            "INSERT INTO projects (id,name,description,color,sort_order,archived,created_at,updated_at)
+             VALUES ('p1','项目A',NULL,NULL,0,0,1,1)",
+            [],
+        )
+        .unwrap();
+
+        let seed = CreateTodo {
+            title: "有内容".into(),
+            content: Some("备注".into()),
+            date: Some(20260928),
+            color: Some("red".into()),
+            category: None,
+            priority: None,
+            project_id: Some("p1".into()),
+            time: Some("09:30".into()),
+            parent_id: None,
+            sort_order: None,
+        };
+        let t = create_todo(&conn, seed).unwrap();
+        assert_eq!(t.content.as_deref(), Some("备注"));
+        assert_eq!(t.date, Some(20260928));
+        assert_eq!(t.color.as_deref(), Some("red"));
+        assert_eq!(t.project_id.as_deref(), Some("p1"));
+        assert_eq!(t.time.as_deref(), Some("09:30"));
+
+        // 用哨兵清空（前端经 JSON 反序列化后正是这个形态）
+        let cleared = update_todo(
+            &conn,
+            &t.id,
+            UpdateTodo {
+                content: Some(Some(String::new())),
+                date: Some(Some(0)),
+                color: Some(Some(String::new())),
+                project_id: Some(Some(String::new())),
+                time: Some(Some(String::new())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(cleared.content, None, "content 空串哨兵应清成 NULL");
+        assert_eq!(cleared.date, None, "date 0 哨兵应清成 NULL（进收集箱）");
+        assert_eq!(cleared.color, None, "color 空串哨兵应清成 NULL");
+        assert_eq!(cleared.project_id, None, "project_id 空串哨兵应清成 NULL");
+        assert_eq!(cleared.time, None, "time 空串哨兵应清成 NULL");
+        assert_eq!(cleared.title, "有内容", "非清除字段不受影响");
+
+        // 「缺失=不改」：先把颜色设回 green，再只改标题，颜色应保持
+        let re = update_todo(
+            &conn,
+            &t.id,
+            UpdateTodo { color: Some(Some("green".into())), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(re.color.as_deref(), Some("green"));
+        let renamed = update_todo(
+            &conn,
+            &t.id,
+            UpdateTodo { title: Some("改名".into()), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(renamed.title, "改名");
+        assert_eq!(renamed.color.as_deref(), Some("green"), "未发送的 color 不应被改动");
+
+        // 非法的「非空」颜色仍必须被拒（"" 不算非法，上面已放行）
+        let bad = update_todo(
+            &conn,
+            &t.id,
+            UpdateTodo { color: Some(Some("magenta".into())), ..Default::default() },
+        );
+        assert!(bad.is_err(), "非法非空颜色仍应被拒");
+
         let _ = std::fs::remove_dir_all(root);
     }
 }

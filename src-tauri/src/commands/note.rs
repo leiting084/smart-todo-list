@@ -358,19 +358,32 @@ fn notes_dir() -> &'static std::path::Path {
 #[tauri::command]
 pub fn note_create(db: State<'_, Db>, input: CreateNote) -> Result<Note, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    create_note(&conn, notes_dir(), input)
+    let note = create_note(&conn, notes_dir(), input)?;
+    let _ = crate::services::oplog::record(&conn, "create", "note", Some(&note.id), &note.title);
+    Ok(note)
 }
 
 #[tauri::command]
 pub fn note_rename(db: State<'_, Db>, id: String, title: String) -> Result<Note, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    rename_note(&conn, notes_dir(), &id, &title)
+    let note = rename_note(&conn, notes_dir(), &id, &title)?;
+    let _ = crate::services::oplog::record(
+        &conn,
+        "update",
+        "note",
+        Some(&note.id),
+        &format!("重命名笔记：{}", note.title),
+    );
+    Ok(note)
 }
 
 #[tauri::command]
 pub fn note_delete(db: State<'_, Db>, id: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    delete_note(&conn, notes_dir(), &id)
+    let title = get_note(&conn, notes_dir(), &id).map(|n| n.title).unwrap_or_else(|_| id.clone());
+    delete_note(&conn, notes_dir(), &id)?;
+    let _ = crate::services::oplog::record(&conn, "delete", "note", Some(&id), &title);
+    Ok(())
 }
 
 #[tauri::command]
@@ -407,7 +420,15 @@ pub fn note_create_todo_cmd(
     date: Option<i64>,
 ) -> Result<crate::models::Todo, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    note_create_todo(&conn, &note_id, &text, date)
+    let todo = note_create_todo(&conn, &note_id, &text, date)?;
+    let _ = crate::services::oplog::record(
+        &conn,
+        "create",
+        "todo",
+        Some(&todo.id),
+        &format!("笔记生成待办：{}", todo.title),
+    );
+    Ok(todo)
 }
 
 #[derive(serde::Serialize)]

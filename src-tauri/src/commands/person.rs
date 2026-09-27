@@ -273,19 +273,27 @@ pub fn set_assignees(
 #[tauri::command]
 pub fn person_create(db: State<'_, Db>, input: CreatePerson) -> Result<Person, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    create_person(&conn, input)
+    let person = create_person(&conn, input)?;
+    let _ = crate::services::oplog::record(&conn, "create", "person", Some(&person.id), &person.name);
+    Ok(person)
 }
 
 #[tauri::command]
 pub fn person_update(db: State<'_, Db>, id: String, input: UpdatePerson) -> Result<Person, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    update_person(&conn, &id, input)
+    let person = update_person(&conn, &id, input)?;
+    let _ = crate::services::oplog::record(&conn, "update", "person", Some(&person.id), &person.name);
+    Ok(person)
 }
 
 #[tauri::command]
 pub fn person_archive(db: State<'_, Db>, id: String, archived: bool) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    set_person_archived(&conn, &id, archived)
+    let name = get_person(&conn, &id).map(|p| p.name).unwrap_or_else(|_| id.clone());
+    set_person_archived(&conn, &id, archived)?;
+    let action = if archived { "archive" } else { "unarchive" };
+    let _ = crate::services::oplog::record(&conn, action, "person", Some(&id), &name);
+    Ok(())
 }
 
 #[tauri::command]

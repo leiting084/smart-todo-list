@@ -313,6 +313,21 @@ export interface NoteContent {
   content: string;
 }
 
+// ---- 最近操作只读日志（#32） ----
+export interface OpLogEntry {
+  id: number;
+  /** 毫秒时间戳 */
+  ts: number;
+  /** create/update/delete/complete/uncomplete/archive/unarchive/import */
+  action: string;
+  /** todo/project/memo/note/goal/person */
+  entityType: string;
+  /** 目标 id；批量操作为 null（后端 None 时省略该字段） */
+  entityId?: string | null;
+  /** 人类可读摘要 */
+  summary: string;
+}
+
 export const api = {
   // ---- 系统 / 设置 ----
   ping: () => invoke<string>("ping"),
@@ -511,6 +526,10 @@ export const api = {
 
   // ---- 搜索（T4.5） ----
   searchAll: (q: string) => invoke<SearchResult>("search_all", { q }),
+
+  // ---- 最近操作只读日志（#32） ----
+  /** 读取最近操作记录（新→旧），后端裁剪到最多 500 条 */
+  oplogList: (limit = 100) => invoke<OpLogEntry[]>("oplog_list", { limit }),
 };
 
 /** settings 键名集中处，避免散落字符串 */

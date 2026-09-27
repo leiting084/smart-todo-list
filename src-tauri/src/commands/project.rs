@@ -74,7 +74,8 @@ pub fn update_project(conn: &Connection, id: &str, input: UpdateProject) -> Resu
         }
     }
     if let Some(Some(c)) = &input.color {
-        if !COLORS.contains(&c.as_str()) {
+        // 前端用空串 "" 表示「清除颜色」（JSON null 会被 serde 折叠成"不改"，无法区分）
+        if !c.is_empty() && !COLORS.contains(&c.as_str()) {
             return Err(format!("color 必须是 {COLORS:?}，实际 {c}"));
         }
     }
@@ -89,10 +90,18 @@ pub fn update_project(conn: &Connection, id: &str, input: UpdateProject) -> Resu
         push("name", Value::Text(n.trim().to_string()));
     }
     if let Some(d) = input.description {
-        push("description", d.map_or(Value::Null, Value::Text));
+        let v = match d.as_deref() {
+            Some(s) if !s.is_empty() => Value::Text(s.to_string()),
+            _ => Value::Null, // None（不改）不会走到这；Some(None) 或 Some("") → 清空
+        };
+        push("description", v);
     }
     if let Some(c) = input.color {
-        push("color", c.map_or(Value::Null, Value::Text));
+        let v = match c.as_deref() {
+            Some(s) if !s.is_empty() => Value::Text(s.to_string()),
+            _ => Value::Null, // Some("") → 清除颜色
+        };
+        push("color", v);
     }
     if let Some(s) = input.sort_order {
         push("sort_order", Value::Integer(s));
@@ -161,26 +170,37 @@ pub fn project_stats(conn: &Connection, id: &str) -> Result<ProjectStats, String
 #[tauri::command]
 pub fn project_create(db: State<'_, Db>, input: CreateProject) -> Result<Project, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    create_project(&conn, input)
+    let project = create_project(&conn, input)?;
+    let _ = crate::services::oplog::record(&conn, "create", "project", Some(&project.id), &project.name);
+    Ok(project)
 }
 
 #[tauri::command]
 pub fn project_update(db: State<'_, Db>, id: String, input: UpdateProject) -> Result<Project, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    update_project(&conn, &id, input)
+    let project = update_project(&conn, &id, input)?;
+    let _ = crate::services::oplog::record(&conn, "update", "project", Some(&project.id), &project.name);
+    Ok(project)
 }
 
 #[tauri::command]
 pub fn project_archive(db: State<'_, Db>, id: String, archived: bool) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    set_archived(&conn, &id, archived)
+    let name = get_project(&conn, &id).map(|p| p.name).unwrap_or_else(|_| id.clone());
+    set_archived(&conn, &id, archived)?;
+    let action = if archived { "archive" } else { "unarchive" };
+    let _ = crate::services::oplog::record(&conn, action, "project", Some(&id), &name);
+    Ok(())
 }
 
 /// 删除=归档（SPEC：UI 不物理删）。
 #[tauri::command]
 pub fn project_delete(db: State<'_, Db>, id: String) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
-    set_archived(&conn, &id, true)
+    let name = get_project(&conn, &id).map(|p| p.name).unwrap_or_else(|_| id.clone());
+    set_archived(&conn, &id, true)?;
+    let _ = crate::services::oplog::record(&conn, "delete", "project", Some(&id), &name);
+    Ok(())
 }
 
 #[tauri::command]
@@ -323,6 +343,45 @@ mod tests {
         assert!(pid.is_none(), "ON DELETE SET NULL 兜底");
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM todos", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 1, "待办本身仍在");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_clears_color_and_description_via_empty_string() {
+        let (conn, root) = temp_db("clear");
+        let p = create_project(&conn, CreateProject {
+            name: "带色项目".into(),
+            description: Some("描述内容".into()),
+            color: Some("blue".into()),
+            sort_order: None,
+        })
+        .unwrap();
+        assert_eq!(p.color.as_deref(), Some("blue"));
+
+        // 前端契约：用空串 "" 表示清除（JSON null 会被 serde 折叠成"不改"）
+        let after = update_project(&conn, &p.id, UpdateProject {
+            color: Some(Some("".into())),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(after.color, None, "空串应把颜色清成 NULL");
+        assert_eq!(after.description.as_deref(), Some("描述内容"), "未提供的描述不应被改动");
+
+        // 空串清除描述
+        let after2 = update_project(&conn, &p.id, UpdateProject {
+            description: Some(Some("".into())),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(after2.description, None, "空串应把描述清成 NULL");
+        assert_eq!(after2.color, None, "颜色保持已清除状态");
+
+        // 非法颜色仍被拒
+        assert!(update_project(&conn, &p.id, UpdateProject {
+            color: Some(Some("pink".into())),
+            ..Default::default()
+        })
+        .is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 }
