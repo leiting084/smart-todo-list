@@ -30,6 +30,37 @@
   let assignees = $state<Assignee[]>([]);
   /** 该待办被哪些目标关联 */
   let linkedGoalIds = $state<Set<string>>(new Set());
+  /** 全量待办（供「父任务」选择器列候选；含子/孙，前端再排除自身与后代防环） */
+  let allTodos = $state<Todo[]>([]);
+
+  /** 收集 id 的全部后代（沿 parentId 向下），用于父任务候选里剔除会成环的项 */
+  function collectDescendants(rootId: string, todos: Todo[]): Set<string> {
+    const kids = new Map<string, string[]>();
+    for (const t of todos) {
+      if (t.parentId) {
+        const arr = kids.get(t.parentId);
+        if (arr) arr.push(t.id);
+        else kids.set(t.parentId, [t.id]);
+      }
+    }
+    const out = new Set<string>();
+    const stack = [rootId];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      for (const c of kids.get(cur) ?? []) {
+        if (!out.has(c)) { out.add(c); stack.push(c); }
+      }
+    }
+    return out;
+  }
+
+  /** 可作为父任务的候选：排除自身 + 自身后代（后端也会二次兜底拒环） */
+  const parentOptions = $derived.by(() => {
+    if (!todo) return [] as Todo[];
+    const banned = collectDescendants(todo.id, allTodos);
+    banned.add(todo.id);
+    return allTodos.filter((t) => !banned.has(t.id));
+  });
 
   // 选中项变化 → 拉详情
   $effect(() => {
@@ -42,14 +73,16 @@
   });
 
   async function load(id: string) {
-    const [t, people, projects, goals] = await Promise.all([
+    const [t, people, projects, goals, all] = await Promise.all([
       api.todoGet(id),
       loadPeople(),
       loadProjects(),
       loadGoals(),
+      api.todoList(),
     ]);
     if (ui.activeTodoId !== id) return; // 已切换到别的项
     todo = t;
+    allTodos = all;
     descDraft = t?.content ?? "";
     tagDraft = (t?.tags ?? []).join(", ");
     assignees = t ? await api.todoGetAssignees(t.id) : [];
@@ -98,6 +131,20 @@
       syncList(await api.todoGet(todo.id) as Todo);
     } catch (e) {
       alert(`标签保存失败：${e}`);
+    }
+  }
+
+  // ---- 父任务（改挂 / 清除；空串哨兵 = 变回顶层） ----
+  async function setParent(e: Event) {
+    if (!todo) return;
+    const val = (e.target as HTMLSelectElement).value;
+    if (val === (todo.parentId ?? "")) return;
+    try {
+      syncList(await api.todoUpdate(todo.id, { parentId: val }));
+      // 重新拉全量，保证候选与后代防环基于最新父子关系
+      allTodos = await api.todoList();
+    } catch (err) {
+      alert(`设置父任务失败：${err}`);
     }
   }
 
@@ -293,6 +340,14 @@
           <option value="">（无）</option>
           {#each projectsState.list as p (p.id)}
             <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="wide">父任务（子待办可改挂 / 选「顶层」即摘掉父子关系）
+        <select value={todo.parentId ?? ""} onchange={setParent}>
+          <option value="">（无 · 顶层任务）</option>
+          {#each parentOptions as p (p.id)}
+            <option value={p.id}>{p.title}</option>
           {/each}
         </select>
       </label>

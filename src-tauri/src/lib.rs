@@ -238,6 +238,8 @@ pub fn run() {
             services::search::search_all,
             // 最近操作只读日志（#32）
             services::oplog::oplog_list,
+            services::oplog::oplog_clear,
+            services::oplog::oplog_delete,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

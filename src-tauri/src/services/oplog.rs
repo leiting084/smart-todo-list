@@ -91,6 +91,31 @@ pub fn oplog_list(db: State<'_, Db>, limit: Option<i64>) -> Result<Vec<OpLogEntr
     list(&conn, limit)
 }
 
+/// 删除全部操作日志（清空）。返回删除条数。
+pub fn clear(conn: &Connection) -> Result<usize, String> {
+    conn.execute("DELETE FROM op_log", []).map_err(|e| e.to_string())
+}
+
+/// 删除单条操作日志（按自增 id）。返回删除条数（0 表示不存在）。
+pub fn delete(conn: &Connection, id: i64) -> Result<usize, String> {
+    conn.execute("DELETE FROM op_log WHERE id = ?1", params![id])
+        .map_err(|e| e.to_string())
+}
+
+/// 前端清空最近操作日志。
+#[tauri::command]
+pub fn oplog_clear(db: State<'_, Db>) -> Result<usize, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    clear(&conn)
+}
+
+/// 前端删除单条操作日志。
+#[tauri::command]
+pub fn oplog_delete(db: State<'_, Db>, id: i64) -> Result<usize, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    delete(&conn, id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,6 +177,28 @@ mod tests {
             .query_row("SELECT MIN(id) FROM op_log", [], |r| r.get(0))
             .unwrap();
         assert!(oldest_kept > 1, "最早的若干条应已被裁剪（min id > 1）");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_single_and_clear_all() {
+        let (conn, root) = temp_db("del");
+        record(&conn, "create", "todo", Some("t1"), "A").unwrap();
+        record(&conn, "update", "todo", Some("t1"), "B").unwrap();
+        record(&conn, "delete", "todo", Some("t1"), "C").unwrap();
+
+        // 单条删除：删最旧那条（id 最小）
+        let oldest: i64 = conn
+            .query_row("SELECT MIN(id) FROM op_log", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(delete(&conn, oldest).unwrap(), 1);
+        assert_eq!(list(&conn, None).unwrap().len(), 2);
+        // 删不存在的 id → 0
+        assert_eq!(delete(&conn, 999_999).unwrap(), 0);
+
+        // 清空
+        assert_eq!(clear(&conn).unwrap(), 2);
+        assert_eq!(list(&conn, None).unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -164,6 +164,25 @@ pub fn get_todo(conn: &Connection, id: &str) -> Result<Option<Todo>, String> {
     .map_err(|e| e.to_string())
 }
 
+/// `maybe` 是否为 `ancestor` 的后代（沿 parent_id 递归向下收集全部后代再判断）。
+/// 用于父任务改挂时的环检测：把 X 的父设为 P 前，先确认 P 不在 X 的后代里。
+fn is_descendant(conn: &Connection, ancestor: &str, maybe: &str) -> Result<bool, String> {
+    let mut stmt = conn
+        .prepare(
+            "WITH RECURSIVE desc_(oid) AS (
+               SELECT id FROM todos WHERE parent_id = ?1
+               UNION ALL
+               SELECT t.id FROM todos t JOIN desc_ d ON t.parent_id = d.oid
+             )
+             SELECT EXISTS (SELECT 1 FROM desc_ WHERE oid = ?2)",
+        )
+        .map_err(|e| e.to_string())?;
+    let hit: bool = stmt
+        .query_row(params![ancestor, maybe], |r| r.get::<_, i64>(0).map(|v| v != 0))
+        .map_err(|e| e.to_string())?;
+    Ok(hit)
+}
+
 pub fn update_todo(conn: &Connection, id: &str, input: UpdateTodo) -> Result<Todo, String> {
     if get_todo(conn, id)?.is_none() {
         return Err(format!("待办不存在：{id}"));
@@ -199,6 +218,26 @@ pub fn update_todo(conn: &Connection, id: &str, input: UpdateTodo) -> Result<Tod
     if let Some(Some(t)) = &input.time {
         if !t.is_empty() {
             validate_time(&Some(t.clone()))?; // "" = 清除时间哨兵
+        }
+    }
+
+    // 父任务环检测：把 id 的父设为 p（非空哨兵）时，p 不能是 id 自身，
+    // 也不能是 id 的后代（否则 parent_id 链成环，树渲染/连带完成递归会炸）。
+    // 空串 "" = 清除父级（变回顶层），无需校验。
+    if let Some(Some(p)) = input.parent_id.as_ref() {
+        if !p.is_empty() {
+            if p == id {
+                return Err("父任务不能是自己".into());
+            }
+            let exists: i64 = conn
+                .query_row("SELECT COUNT(*) FROM todos WHERE id = ?1", params![p], |r| r.get(0))
+                .map_err(|e| e.to_string())?;
+            if exists == 0 {
+                return Err(format!("父任务不存在：{p}"));
+            }
+            if is_descendant(conn, id, p)? {
+                return Err("不能把自己的子/孙任务设为自己的父任务（会成环）".into());
+            }
         }
     }
 
@@ -1200,6 +1239,60 @@ mod tests {
         for t in [&child1, &child2, &grand] {
             assert!(get_todo(&conn, &t.id).unwrap().is_none(), "{} 应随父级联删除", t.title);
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// #1 修复：父任务可改挂 / 可清除，且拒绝成环（自己、后代、不存在）。
+    #[test]
+    fn reparent_and_cycle_guard() {
+        let (conn, root) = temp_db("reparent");
+        let p = create_todo(&conn, mk("父")).unwrap();
+        let mut c1 = mk("子1");
+        c1.parent_id = Some(p.id.clone());
+        let c1 = create_todo(&conn, c1).unwrap();
+        let mut g = mk("孙");
+        g.parent_id = Some(c1.id.clone());
+        let g = create_todo(&conn, g).unwrap();
+        let other = create_todo(&conn, mk("无关任务")).unwrap();
+
+        // 清除父级（空串哨兵）→ 子1 变回顶层
+        let detached = update_todo(
+            &conn,
+            &c1.id,
+            UpdateTodo { parent_id: Some(Some(String::new())), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(detached.parent_id, None, "空串应把 parent_id 清成 NULL");
+
+        // 改挂到无关任务 → 成功
+        let re = update_todo(
+            &conn,
+            &c1.id,
+            UpdateTodo { parent_id: Some(Some(other.id.clone())), ..Default::default() },
+        )
+        .unwrap();
+        assert_eq!(re.parent_id.as_deref(), Some(other.id.as_str()));
+
+        // 把自己设为父 → 拒
+        assert!(update_todo(
+            &conn, &p.id,
+            UpdateTodo { parent_id: Some(Some(p.id.clone())), ..Default::default() }
+        ).is_err(), "父不能是自己");
+
+        // 把自己的后代设为父 → 拒（p 的后代有 c1? c1 现挂 other 下，重新构造：g 是 c1 后代）
+        // 先把 c1 挂回 p 下，使 g(=c1 的后代) 成为 p 的后代
+        update_todo(&conn, &c1.id, UpdateTodo { parent_id: Some(Some(p.id.clone())), ..Default::default() }).unwrap();
+        assert!(update_todo(
+            &conn, &p.id,
+            UpdateTodo { parent_id: Some(Some(g.id.clone())), ..Default::default() }
+        ).is_err(), "不能把孙设为父（成环）");
+
+        // 不存在的父 → 拒
+        assert!(update_todo(
+            &conn, &p.id,
+            UpdateTodo { parent_id: Some(Some("ghost".into())), ..Default::default() }
+        ).is_err(), "父不存在应拒");
+
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -13,6 +13,8 @@
   let selectedId = $state<string | null>(null);
   let detailTodos = $state<Todo[]>([]);
   let stats = $state<ProjectStats | null>(null);
+  /** 是否显示已归档项目（默认隐藏——归档即消失的根因在此开关缺失） */
+  let showArchived = $state(false);
   const COLORS = ["red", "orange", "yellow", "green", "blue", "purple", "gray"];
   const COLOR_HEX: Record<string, string> = {
     red: "#ef4444", orange: "#f97316", yellow: "#eab308", green: "#22c55e",
@@ -23,8 +25,15 @@
   let nameDraft = $state("");
   let descDraft = $state("");
   const selected = $derived(projectsState.list.find((p) => p.id === selectedId) ?? null);
+  const activeProjects = $derived(projectsState.list.filter((p) => !p.archived));
+  const archivedProjects = $derived(projectsState.list.filter((p) => p.archived));
 
-  onMount(() => loadProjects());
+  onMount(() => loadProjects(showArchived));
+
+  async function toggleArchived() {
+    showArchived = !showArchived;
+    await loadProjects(showArchived);
+  }
 
   async function add() {
     const name = newName.trim();
@@ -58,9 +67,15 @@
     await refreshDetail();
   }
   async function archive(p: Project) {
-    if (!window.confirm(`归档项目「${p.name}」？其待办仍保留。`)) return;
+    if (!window.confirm(`归档项目「${p.name}」？其待办仍保留，可在「显示已归档」里恢复。`)) return;
     await setProjectArchived(p.id, true);
     selectedId = null;
+    await loadProjects(showArchived);
+  }
+  /** 取消归档（恢复），成功后按当前 showArchived 重新拉列表 */
+  async function unarchive(p: Project) {
+    await setProjectArchived(p.id, false);
+    await loadProjects(showArchived);
   }
   /** 选择项目颜色（null=清除），立即落库并收起选择器 */
   async function setColor(color: string | null) {
@@ -137,7 +152,12 @@
         onkeydown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         onblur={commitName}
       />
-      <button class="archive" onclick={() => archive(selected)}>归档</button>
+      {#if selected.archived}
+        <span class="archived-tag">已归档</span>
+        <button class="archive restore" onclick={() => unarchive(selected)}>取消归档</button>
+      {:else}
+        <button class="archive" onclick={() => archive(selected)}>归档</button>
+      {/if}
     </div>
     <textarea
       class="desc-edit"
@@ -177,12 +197,16 @@
       <input type="text" placeholder="新建项目名称…" bind:value={newName}
         onkeydown={(e) => e.key === "Enter" && add()} />
       <button class="primary" onclick={add} disabled={!newName.trim()}>新建项目</button>
+      <label class="show-arch">
+        <input type="checkbox" checked={showArchived} onchange={toggleArchived} />
+        显示已归档
+      </label>
     </div>
-    {#if projectsState.list.length === 0}
+    {#if activeProjects.length === 0}
       <p class="empty">还没有项目。项目用于归集工作任务（继承旧版）。</p>
     {/if}
     <div class="cards">
-      {#each projectsState.list as p (p.id)}
+      {#each activeProjects as p (p.id)}
         <button class="card" onclick={() => open(p)}>
           <span class="card-top">
             <span class="dot" style={p.color ? `background:${COLOR_HEX[p.color] ?? "#9ca3af"}` : ""}></span>
@@ -192,6 +216,19 @@
         </button>
       {/each}
     </div>
+
+    {#if showArchived && archivedProjects.length > 0}
+      <h3 class="arch-head">已归档（{archivedProjects.length}）</h3>
+      <ul class="arch-list">
+        {#each archivedProjects as p (p.id)}
+          <li>
+            <span class="dot" style={p.color ? `background:${COLOR_HEX[p.color] ?? "#9ca3af"}` : ""}></span>
+            <button class="arch-name" onclick={() => open(p)}>{p.name}</button>
+            <button class="restore" onclick={() => unarchive(p)}>取消归档</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
 {/if}
 

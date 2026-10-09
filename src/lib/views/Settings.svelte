@@ -621,7 +621,7 @@
     <p class="hint">
       绿色便携版**不做自动更新**（不引 updater、不做签名）：有新版本时下载新包覆盖 exe 即可，
       <code>data/</code> 在同级目录不受影响。这里只做手动检查——填一个返回
-      <code>{"{"}"version":"0.3.0","url":"…"{"}"}</code> 的 JSON 地址即可。
+      <code>{"{"}"version":"0.3.1","url":"…"{"}"}</code> 的 JSON 地址即可。
     </p>
     <input placeholder="更新源 JSON 地址（留空 = 不检查）" bind:value={updateUrlInput} />
     <div class="btn-row">
@@ -633,7 +633,7 @@
 
   <section class="block">
     <h3>关于</h3>
-    <p class="hint">智能待办清单 v0.3.0 · Rust + Tauri 2 · 数据本地存储，默认完全离线。关闭主窗=驻留托盘，Esc 同效。</p>
+    <p class="hint">智能待办清单 v0.3.1 · Rust + Tauri 2 · 数据本地存储，默认完全离线。关闭主窗=驻留托盘，Esc 同效。</p>
   </section>
 </div>
 

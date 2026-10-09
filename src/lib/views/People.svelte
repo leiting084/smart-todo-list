@@ -7,6 +7,11 @@
   let newRole = $state("");
   let newEmail = $state("");
   let counts = $state<Record<string, { total: number; done: number }>>({});
+  /** 显示已归档人员开关（默认隐藏——归档即消失的根因） */
+  let showArchived = $state(false);
+
+  const activePeople = $derived(peopleState.list.filter((p) => !p.archived));
+  const archivedPeople = $derived(peopleState.list.filter((p) => p.archived));
 
   // 行内编辑态（编辑姓名/职责/邮箱/备注）
   let editingId = $state<string | null>(null);
@@ -16,9 +21,15 @@
   let editNote = $state("");
 
   onMount(async () => {
-    await loadPeople();
+    await loadPeople(showArchived);
     await refreshCounts();
   });
+
+  async function toggleArchived() {
+    showArchived = !showArchived;
+    await loadPeople(showArchived);
+    await refreshCounts();
+  }
 
   async function refreshCounts() {
     const next: Record<string, { total: number; done: number }> = {};
@@ -76,8 +87,15 @@
   }
 
   async function archive(p: Person) {
-    if (!window.confirm(`归档人员「${p.name}」？历史分配记录保留。`)) return;
+    if (!window.confirm(`归档人员「${p.name}」？历史分配记录保留，可在「显示已归档」里恢复。`)) return;
     await setPersonArchived(p.id, true);
+    await loadPeople(showArchived);
+    await refreshCounts();
+  }
+
+  async function unarchive(p: Person) {
+    await setPersonArchived(p.id, false);
+    await loadPeople(showArchived);
     await refreshCounts();
   }
 </script>
@@ -105,14 +123,18 @@
       onkeydown={(e) => e.key === "Enter" && add()}
     />
     <button class="primary" onclick={add} disabled={!newName.trim()}>新建人员</button>
+    <label class="show-arch">
+      <input type="checkbox" checked={showArchived} onchange={toggleArchived} />
+      显示已归档
+    </label>
   </div>
 
-  {#if peopleState.list.length === 0}
+  {#if activePeople.length === 0}
     <p class="empty">还没有人员。工作任务可分配给多人协作完成。</p>
   {/if}
 
   <ul class="list">
-    {#each peopleState.list as p (p.id)}
+    {#each activePeople as p (p.id)}
       <li class="person">
         {#if editingId === p.id}
           <div class="edit-form">
@@ -143,6 +165,24 @@
       </li>
     {/each}
   </ul>
+
+  {#if showArchived && archivedPeople.length > 0}
+    <h3 class="arch-head">已归档（{archivedPeople.length}）</h3>
+    <ul class="list">
+      {#each archivedPeople as p (p.id)}
+        <li class="person archived">
+          <div class="info">
+            <span class="name">{p.name}</span>
+            {#if p.role}<span class="role">{p.role}</span>{/if}
+          </div>
+          <span class="stat">
+            {#if counts[p.id]}负责任务 {counts[p.id].total}{/if}
+          </span>
+          <button class="restore" onclick={() => unarchive(p)}>取消归档</button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 </div>
 
 <style>

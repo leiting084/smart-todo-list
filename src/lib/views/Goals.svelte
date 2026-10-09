@@ -13,6 +13,8 @@
   let selectedId = $state<string | null>(null);
   let links = $state<GoalLink[]>([]);
   let stats = $state<GoalStats | null>(null);
+  // 是否显示已归档目标（默认隐藏；勾上后 loadGoals(true) 拉回归档项）
+  let showArchived = $state(false);
   // 手动进度滑块草稿：拖动中未提交的值（null = 未在拖动）
   let progressDraft = $state<number | null>(null);
   // 目标日期编辑草稿（YYYY-MM-DD，空串=未设）
@@ -22,6 +24,8 @@
   const linkPct = $derived(Math.round((stats?.progress ?? 0) * 100));
   const hasLinks = $derived((stats?.todoCount ?? 0) > 0);
   const displayPct = $derived(hasLinks ? linkPct : (progressDraft ?? selected?.progress ?? 0));
+  const activeGoals = $derived(goalsState.list.filter((g) => g.status !== "archived"));
+  const archivedGoals = $derived(goalsState.list.filter((g) => g.status === "archived"));
   /** 列表卡片进度：有关联待办用完成率，否则回退手动进度 */
   function goalPct(g: Goal): number {
     return g.todoCount > 0 ? Math.round(g.linkProgress * 100) : g.progress;
@@ -41,7 +45,12 @@
     return Number.isNaN(ts) ? null : ts;
   }
 
-  onMount(() => loadGoals());
+  onMount(() => loadGoals(showArchived));
+
+  async function toggleShowArchived() {
+    showArchived = !showArchived;
+    await loadGoals(showArchived);
+  }
 
   async function add() {
     const title = newTitle.trim();
@@ -71,6 +80,18 @@
     if (!window.confirm(`归档目标「${g.title}」？`)) return;
     await archiveGoal(g.id);
     selectedId = null;
+    // 归档视图打开时，archiveGoal 已从 list 中 filter 掉；重新拉取以确保与后端一致
+    await loadGoals(showArchived);
+  }
+  /** 取消归档：status 从 archived 改回 active（复用 goal_update 通道） */
+  async function restore(g: Goal) {
+    try {
+      await setGoalStatus(g.id, "active");
+      selectedId = null;
+      await loadGoals(showArchived);
+    } catch (e) {
+      alert(`取消归档失败：${e}`);
+    }
   }
   async function toggleDone(g: Goal) {
     await setGoalStatus(g.id, g.status === "done" ? "active" : "done");
@@ -136,10 +157,15 @@
     <div class="head">
       <h2>{selected.title}</h2>
       {#if selected.category}<span class="cat">{selected.category}</span>{/if}
-      <button onclick={() => toggleDone(selected)}>
-        {selected.status === "done" ? "✓ 已达成（点击恢复）" : "标记达成"}
-      </button>
-      <button class="del" onclick={() => remove(selected)}>归档</button>
+      {#if selected.status === "archived"}
+        <span class="archived-tag">已归档</span>
+        <button class="restore" onclick={() => restore(selected)}>取消归档</button>
+      {:else}
+        <button onclick={() => toggleDone(selected)}>
+          {selected.status === "done" ? "✓ 已达成（点击恢复）" : "标记达成"}
+        </button>
+        <button class="del" onclick={() => remove(selected)}>归档</button>
+      {/if}
     </div>
     {#if selected.description}<p class="desc">{selected.description}</p>{/if}
 
@@ -235,12 +261,16 @@
         onkeydown={(e) => e.key === "Enter" && add()}
       />
       <button class="primary" onclick={add} disabled={!newTitle.trim()}>新建目标</button>
+      <label class="show-arch">
+        <input type="checkbox" checked={showArchived} onchange={toggleShowArchived} />
+        显示已归档
+      </label>
     </div>
-    {#if goalsState.list.length === 0}
+    {#if activeGoals.length === 0}
       <p class="empty">还没有长期目标。目标可关联待办/备忘/笔记；进度按关联待办完成率自动计算（无关联时可手动设定）。</p>
     {/if}
     <div class="cards">
-      {#each goalsState.list as g (g.id)}
+      {#each activeGoals as g (g.id)}
         <button class="card" onclick={() => open(g)}>
           <span class="card-top">
             <span class="name">{g.title}</span>
@@ -255,6 +285,18 @@
         </button>
       {/each}
     </div>
+    {#if showArchived && archivedGoals.length > 0}
+      <h3 class="arch-head">已归档（{archivedGoals.length}）</h3>
+      <ul class="arch-list">
+        {#each archivedGoals as g (g.id)}
+          <li>
+            <span class="arch-title">{g.title}</span>
+            <button class="restore" onclick={() => restore(g)}>取消归档</button>
+            <button class="open" onclick={() => open(g)}>查看</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </div>
 {/if}
 
@@ -301,4 +343,12 @@
   .unlink:hover { color: #dc2626; }
   .del { color: #dc2626; }
   .dim { color: var(--color-text-dim); }
+  .show-arch { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-dim); white-space: nowrap; }
+  .archived-tag { font-size: 11px; color: var(--color-text-dim); border: 1px solid var(--color-border); border-radius: 8px; padding: 0 8px; }
+  .restore { font-size: 12px; color: var(--color-primary); border: 1px solid var(--color-primary); background: var(--color-primary-soft); border-radius: 6px; padding: 2px 10px; }
+  .open { font-size: 12px; }
+  .arch-head { margin: 18px 0 6px; font-size: 13px; color: var(--color-text-dim); }
+  .arch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .arch-list li { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px dashed var(--color-border); border-radius: 6px; opacity: 0.75; }
+  .arch-title { flex: 1; }
 </style>

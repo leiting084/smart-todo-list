@@ -530,6 +530,10 @@ export const api = {
   // ---- 最近操作只读日志（#32） ----
   /** 读取最近操作记录（新→旧），后端裁剪到最多 500 条 */
   oplogList: (limit = 100) => invoke<OpLogEntry[]>("oplog_list", { limit }),
+  /** 清空全部操作日志，返回删除条数 */
+  oplogClear: () => invoke<number>("oplog_clear"),
+  /** 删除单条操作日志，返回删除条数（0=不存在） */
+  oplogDelete: (id: number) => invoke<number>("oplog_delete", { id }),
 };
 
 /** settings 键名集中处，避免散落字符串 */
