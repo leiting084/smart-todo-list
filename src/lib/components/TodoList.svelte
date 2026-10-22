@@ -26,16 +26,24 @@
   function childrenOf(id: string) {
     return todosState.items.filter((t) => t.parentId === id);
   }
-  /** 按树序展开为 (todo, depth) 平铺；折叠节点的后代不展开 */
+  /** 按树序展开为 (todo, depth) 平铺；折叠节点的后代不展开。
+   *  顶层根 = parentId 为空，或父任务不在当前列表里（孤儿：搜索/筛选把父项过滤掉时，子项仍要显示，否则整条丢失）。 */
   const flatTree = $derived.by(() => {
     const out: { t: (typeof todosState.items)[number]; depth: number }[] = [];
-    const walk = (parentId: string | null, depth: number) => {
-      for (const t of todosState.items.filter((x) => (x.parentId ?? null) === parentId)) {
-        out.push({ t, depth });
-        if (!collapsed.has(t.id)) walk(t.id, depth + 1);
+    const present = new Set(todosState.items.map((x) => x.id));
+    const isTop = (x: (typeof todosState.items)[number]) =>
+      (x.parentId ?? null) === null || !present.has(x.parentId as string);
+    const walkChildren = (parent: (typeof todosState.items)[number], depth: number) => {
+      if (collapsed.has(parent.id)) return; // 折叠则不展开后代
+      for (const c of todosState.items.filter((x) => x.parentId === parent.id)) {
+        out.push({ t: c, depth });
+        walkChildren(c, depth + 1);
       }
     };
-    walk(null, 0);
+    for (const t of todosState.items.filter(isTop)) {
+      out.push({ t, depth: 0 });
+      walkChildren(t, 1);
+    }
     return out;
   });
 
@@ -88,6 +96,19 @@
     gray: "#9ca3af",
   };
   const PRIORITY_LABEL: Record<string, string> = { high: "高", medium: "中", low: "低" };
+
+  // ---- 时间显示辅助（开始/结束/提醒）----
+  function pad2(n: number): string {
+    return n < 10 ? `0${n}` : `${n}`;
+  }
+  /** 毫秒时间戳 → "MM-DD HH:mm"（跨年则 "YYYY-MM-DD HH:mm"） */
+  function fmtStamp(ts: number): string {
+    const d = new Date(ts);
+    const md = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return sameYear ? `${md} ${hm}` : `${d.getFullYear()}-${md} ${hm}`;
+  }
 
   let {
     inboxMode = false,
@@ -547,70 +568,77 @@
         {/if}
       </span>
 
-      {#if editingId === t.id}
-        <input
-          class="inline-edit"
-          type="text"
-          bind:value={editingText}
-          use:focusOnMount
-          onkeydown={(e) => {
-            if (e.key === "Enter") commitEdit(t);
-            if (e.key === "Enter" && e.shiftKey) void addChild(t); // T3.1：Shift+Enter 新增子项
-            if (e.key === "Escape") editingId = null;
-          }}
-          onblur={() => commitEdit(t)}
-        />
-      {:else}
-        <!-- 单击进入行内编辑（SPEC §8.3，对标 External 单击编辑习惯）；批量模式下单击=切换选中 -->
-        <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-        <span
-          class="title"
-          role="button"
-          tabindex="0"
-          onclick={() => (batchMode ? toggleSelect(t.id) : startEdit(t))}
-          onkeydown={(e) => e.key === "Enter" && (batchMode ? toggleSelect(t.id) : startEdit(t))}
-          title={batchMode ? "点击切换选中" : "单击编辑"}
-        >
-          {t.title}
-        </span>
-      {/if}
-
-      <!-- 标签胶囊 + 行内标签编辑 -->
-      <span class="tags">
-        {#each t.tags ?? [] as name (name)}
-          <button class="pill" onclick={() => (ui.activeTag = name)} title="按此标签筛选">
-            #{name}
-          </button>
-        {/each}
-        {#if tagEditorId === t.id}
+      <div class="main">
+        {#if editingId === t.id}
           <input
-            class="tag-edit"
+            class="inline-edit"
             type="text"
-            placeholder="逗号分隔"
-            bind:value={tagDraft}
+            bind:value={editingText}
             use:focusOnMount
             onkeydown={(e) => {
-              if (e.key === "Enter") commitTags(t);
-              if (e.key === "Escape") tagEditorId = null;
+              if (e.key === "Enter") commitEdit(t);
+              if (e.key === "Enter" && e.shiftKey) void addChild(t); // T3.1：Shift+Enter 新增子项
+              if (e.key === "Escape") editingId = null;
             }}
-            onblur={() => commitTags(t)}
+            onblur={() => commitEdit(t)}
           />
         {:else}
-          <button class="tag-add" onclick={() => startTagEdit(t)} title="编辑标签">＋</button>
-        {/if}
-      </span>
+          <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+          <div class="line1">
+            <span
+              class="title"
+              role="button"
+              tabindex="0"
+              onclick={() => (batchMode ? toggleSelect(t.id) : startEdit(t))}
+              onkeydown={(e) => e.key === "Enter" && (batchMode ? toggleSelect(t.id) : startEdit(t))}
+              title={batchMode ? "点击切换选中" : "单击编辑"}
+            >
+              {t.title}
+            </span>
 
-      <span class="spacer"></span>
+            <!-- 标签胶囊 + 行内标签编辑 -->
+            <span class="tags">
+              {#each t.tags ?? [] as name (name)}
+                <button class="pill" onclick={() => (ui.activeTag = name)} title="按此标签筛选">
+                  #{name}
+                </button>
+              {/each}
+              {#if tagEditorId === t.id}
+                <input
+                  class="tag-edit"
+                  type="text"
+                  placeholder="逗号分隔"
+                  bind:value={tagDraft}
+                  use:focusOnMount
+                  onkeydown={(e) => {
+                    if (e.key === "Enter") commitTags(t);
+                    if (e.key === "Escape") tagEditorId = null;
+                  }}
+                  onblur={() => commitTags(t)}
+                />
+              {:else}
+                <button class="tag-add" onclick={() => startTagEdit(t)} title="编辑标签">＋</button>
+              {/if}
+            </span>
+          </div>
+        {/if}
+
+        <!-- 第二行：时间元信息（开始=创建恒显；提醒仅在设了提醒时；结束仅在完成记录） -->
+        <div class="meta">
+          <span class="m-start" title="开始时间（创建）">开始 {fmtStamp(t.createdAt)}</span>
+          {#if t.time}
+            <span class="m-remind" title="提醒时间">🕐 {t.time}</span>
+          {/if}
+          {#if t.completed && t.completedAt}
+            <span class="m-end" title="结束时间（完成）">完成 {fmtStamp(t.completedAt)}</span>
+          {/if}
+        </div>
+      </div>
 
       <!-- T3.1 新增子任务 -->
       <button class="add-sub" onclick={() => void addChild(t)} title="新增子任务（编辑态 Shift+Enter 同效）">
         ＋子
       </button>
-
-      <!-- 分配（仅工作任务；生活任务隐藏分配区，F31/TASKS T1.6） -->
-      {#if t.time}
-        <span class="clock" title={`提醒 ${t.time}`}>🕐</span>
-      {/if}
 
       {#if t.category === "work"}
         <button class="assign-btn" onclick={() => openAssignEditor(t)} title="分配人员">
@@ -768,13 +796,48 @@
   .todo-row.drop-below {
     box-shadow: inset 0 -2px 0 0 var(--color-primary);
   }
+  .main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .line1 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
   .title {
     min-width: 0;
     cursor: text;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .done .title {
     text-decoration: line-through;
     color: var(--color-text-dim);
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    line-height: 1.3;
+    color: var(--color-text-dim);
+  }
+  .meta .m-remind {
+    color: var(--color-primary);
+    opacity: 0.85;
+  }
+  .meta .m-end {
+    color: #16a34a;
+  }
+  .done .meta {
+    opacity: 0.75;
   }
   .tags {
     display: inline-flex;
@@ -803,11 +866,8 @@
     font-size: 12px;
     padding: 2px 6px;
   }
-  .spacer {
-    flex: 1;
-  }
   .inline-edit {
-    flex: 1;
+    width: 100%;
   }
   .color-wrap {
     position: relative;
@@ -879,10 +939,6 @@
   }
   .todo-row:hover .add-sub { visibility: visible; }
   .add-sub:hover { color: var(--color-primary); }
-  .clock {
-    font-size: 12px;
-    opacity: 0.7;
-  }
   .assign-btn {
     font-size: 12px;
     padding: 2px 8px;

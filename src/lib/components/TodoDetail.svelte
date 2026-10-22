@@ -62,6 +62,51 @@
     return allTodos.filter((t) => !banned.has(t.id));
   });
 
+  /** 父任务选择器的筛选条件：标题子串搜索 + 是否含已完成 */
+  let parentSearch = $state("");
+  let parentIncludeDone = $state(false);
+
+  /** id → 项目名，用于给候选标签补上下文，同名可辨 */
+  const projectNameById = $derived(new Map(projectsState.list.map((p) => [p.id, p.name])));
+
+  function fmtYmd(n: number): string {
+    const s = String(n).padStart(8, "0");
+    return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  }
+
+  /** 候选项显示文本：标题 + (项目 · 日期 · 子任务 · 已完成) */
+  function parentOptionLabel(p: Todo): string {
+    const meta: string[] = [];
+    const pname = p.projectId ? projectNameById.get(p.projectId) : "";
+    if (pname) meta.push(pname);
+    if (p.date) meta.push(fmtYmd(p.date));
+    if (p.parentId) meta.push("子任务");
+    if (p.completed) meta.push("已完成");
+    return meta.length ? `${p.title}  (${meta.join(" · ")})` : p.title;
+  }
+
+  /** 父任务候选是否命中关键词：标题 / 正文 / 标签 任一子串命中（与主搜索覆盖一致，修复按标题漏搜正文） */
+  function parentMatches(t: Todo, q: string): boolean {
+    if (t.title.toLowerCase().includes(q)) return true;
+    if (t.content && t.content.toLowerCase().includes(q)) return true;
+    if (t.tags && t.tags.some((tag) => tag.toLowerCase().includes(q))) return true;
+    return false;
+  }
+
+  /** 实际渲染的候选：默认藏已完成 + 按标题/正文/标签过滤；并确保当前父级始终在列（否则 select 会显空） */
+  const parentFiltered = $derived.by(() => {
+    let list = parentOptions;
+    if (!parentIncludeDone) list = list.filter((t) => !t.completed);
+    const q = parentSearch.trim().toLowerCase();
+    let out = q ? list.filter((t) => parentMatches(t, q)) : list;
+    const curId = todo?.parentId;
+    if (curId && !out.some((t) => t.id === curId)) {
+      const cur = parentOptions.find((t) => t.id === curId);
+      if (cur) out = [cur, ...out];
+    }
+    return out;
+  });
+
   // 选中项变化 → 拉详情
   $effect(() => {
     const id = ui.activeTodoId;
@@ -83,6 +128,8 @@
     if (ui.activeTodoId !== id) return; // 已切换到别的项
     todo = t;
     allTodos = all;
+    parentSearch = "";
+    parentIncludeDone = false;
     descDraft = t?.content ?? "";
     tagDraft = (t?.tags ?? []).join(", ");
     assignees = t ? await api.todoGetAssignees(t.id) : [];
@@ -344,10 +391,17 @@
         </select>
       </label>
       <label class="wide">父任务（子待办可改挂 / 选「顶层」即摘掉父子关系）
+        <div class="parent-filter">
+          <input type="text" class="parent-search" placeholder="搜索父任务（标题/描述/标签）…" bind:value={parentSearch} />
+          <label class="parent-done">
+            <input type="checkbox" bind:checked={parentIncludeDone} />含已完成
+          </label>
+          <span class="parent-count">{parentFiltered.length}</span>
+        </div>
         <select value={todo.parentId ?? ""} onchange={setParent}>
           <option value="">（无 · 顶层任务）</option>
-          {#each parentOptions as p (p.id)}
-            <option value={p.id}>{p.title}</option>
+          {#each parentFiltered as p (p.id)}
+            <option value={p.id}>{parentOptionLabel(p)}</option>
           {/each}
         </select>
       </label>
@@ -465,6 +519,13 @@
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .grid label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--color-text-dim); }
   .grid .wide { grid-column: span 2; }
+  .parent-filter { display: flex; align-items: center; gap: 8px; }
+  .parent-search { flex: 1; min-width: 0; }
+  .parent-filter .parent-done {
+    flex-direction: row; align-items: center; gap: 3px;
+    font-size: 12px; color: var(--color-text-dim); white-space: nowrap;
+  }
+  .parent-count { font-size: 12px; color: var(--color-text-dim); min-width: 2ch; text-align: right; }
   .sec-title { font-size: 12px; font-weight: 600; color: var(--color-text-dim); margin-top: 4px; }
   .colors { display: flex; gap: 6px; }
   .dot { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; padding: 0; }

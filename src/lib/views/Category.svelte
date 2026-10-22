@@ -20,6 +20,10 @@
   let priority = $state(""); // "" = 全部
   let q = $state("");
   let draft = $state("");
+  // 完成状态：active=未完成 / done=已完成 / all=全部。默认只看未完成（列表太长时聚焦待办）。
+  let status = $state<"active" | "done" | "all">("active");
+  // 统计：当前筛选域内、与所选 status 相反那一侧的条数（active 时=已完成数，done 时=未完成数）。
+  let otherCount = $state(0);
   let debounce: ReturnType<typeof setTimeout> | undefined;
 
   const isAll = $derived(category === undefined);
@@ -31,13 +35,52 @@
   // 新建待办落到的分类：固定分类视图用 prop，全部视图用共享开关。
   const newCategory = $derived(category ?? ui.quickAddCategory);
 
-  function apply() {
-    loadTodos({
+  /** 与当前筛选同域（category/priority/q），但忽略 status 切换，取反再查一次拿另一半计数。 */
+  async function loadStats() {
+    if (status === "all") {
+      otherCount = 0; // 全部时直接由列表分拆，无需额外查询
+      return;
+    }
+    const opposite = status === "active"; // active→查已完成；done→查未完成
+    try {
+      const list = await api.todoList({
+        category,
+        priority: (priority || undefined) as Todo["priority"] | undefined,
+        q: q.trim() || undefined,
+        completed: opposite,
+      });
+      otherCount = list.length;
+    } catch {
+      otherCount = 0;
+    }
+  }
+
+  const completedCount = $derived(
+    status === "all"
+      ? todosState.items.filter((t) => t.completed).length
+      : status === "done"
+        ? todosState.items.filter((t) => t.completed).length
+        : otherCount + todosState.items.filter((t) => t.completed).length,
+  );
+  const uncompletedCount = $derived(
+    status === "all"
+      ? todosState.items.filter((t) => !t.completed).length
+      : status === "active"
+        ? todosState.items.filter((t) => !t.completed).length
+        : otherCount + todosState.items.filter((t) => !t.completed).length,
+  );
+  const totalCount = $derived(completedCount + uncompletedCount);
+  const doneRate = $derived(totalCount ? Math.round((completedCount / totalCount) * 100) : 0);
+
+  async function apply() {
+    await loadTodos({
       category,
       priority: (priority || undefined) as Todo["priority"] | undefined,
       q: q.trim() || undefined,
       sort: (sort || undefined) as "priority" | undefined,
+      completed: status === "all" ? undefined : status === "done",
     });
+    await loadStats();
   }
 
   onMount(async () => {
@@ -67,6 +110,11 @@
 
 <div class="pane">
   <div class="filters">
+    <div class="seg" role="group" aria-label="完成状态">
+      <button class="seg-btn" class:seg-on={status === "active"} onclick={() => { status = "active"; apply(); }}>未完成</button>
+      <button class="seg-btn" class:seg-on={status === "done"} onclick={() => { status = "done"; apply(); }}>已完成</button>
+      <button class="seg-btn" class:seg-on={status === "all"} onclick={() => { status = "all"; apply(); }}>全部</button>
+    </div>
     <input
       type="text"
       placeholder="搜索标题 / 描述 / 标签…"
@@ -85,12 +133,29 @@
     </select>
   </div>
 
+  {#if totalCount > 0}
+    <div class="stats">
+      <span class="st-item st-undo">未完成 <b>{uncompletedCount}</b></span>
+      <span class="dot">·</span>
+      <span class="st-item st-done">已完成 <b>{completedCount}</b></span>
+      <span class="dot">·</span>
+      <span class="st-item st-total">共 <b>{totalCount}</b> 条</span>
+      <span class="st-spacer"></span>
+      <span class="st-rate">完成率 {doneRate}%</span>
+      <span class="bar" title={`已完成 ${completedCount} / ${totalCount}`}><span class="bar-fill" style={`width:${doneRate}%`}></span></span>
+    </div>
+  {/if}
+
   <TodoList
     emptyText={q || priority
       ? "没有符合条件的待办。"
-      : isAll
-        ? "还没有任何待办。"
-        : "该分类还没有待办。"}
+      : status === "active"
+        ? "没有未完成的任务，全部搞定 🎉"
+        : status === "done"
+          ? "还没有已完成的待办。"
+          : isAll
+            ? "还没有任何待办。"
+            : "该分类还没有待办。"}
     onReorder={persistOrder}
     onRefresh={apply}
     reorderable={sort !== "priority"}
@@ -127,6 +192,77 @@
   }
   .filters input {
     flex: 1;
+  }
+  .seg {
+    display: inline-flex;
+    flex-shrink: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 7px;
+    overflow: hidden;
+  }
+  .seg-btn {
+    border: none;
+    background: var(--color-bg);
+    color: var(--color-text-dim);
+    font-size: 12px;
+    padding: 4px 12px;
+    cursor: pointer;
+    border-radius: 0;
+  }
+  .seg-btn + .seg-btn {
+    border-left: 1px solid var(--color-border);
+  }
+  .seg-btn:hover {
+    color: var(--color-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--color-primary);
+    color: #fff;
+    font-weight: 600;
+  }
+  .stats {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 18px;
+    font-size: 12px;
+    color: var(--color-text-dim);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
+  }
+  .stats b {
+    color: var(--color-text);
+    font-weight: 700;
+  }
+  .st-undo b {
+    color: var(--color-primary);
+  }
+  .st-done b {
+    color: #16a34a;
+  }
+  .stats .dot {
+    opacity: 0.5;
+  }
+  .st-spacer {
+    flex: 1;
+  }
+  .st-rate {
+    font-variant-numeric: tabular-nums;
+  }
+  .bar {
+    display: inline-block;
+    width: 90px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--color-border);
+    overflow: hidden;
+  }
+  .bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: #16a34a;
+    transition: width 0.25s ease;
   }
   .quick-add {
     display: flex;
